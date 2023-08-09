@@ -1,7 +1,8 @@
 import os
 import sys
+import logging
 from typing import List
-
+logging.basicConfig(level=logging.INFO)
 import fire
 import torch
 import transformers
@@ -23,6 +24,7 @@ from peft import (
 from transformers import LlamaForCausalLM, LlamaTokenizer
 
 from utils.prompter import Prompter
+from trainer import LoraTrainer
 
 
 def train(
@@ -229,7 +231,7 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
 
-    trainer = transformers.Trainer(
+    trainer = LoraTrainer(
         model=model,
         train_dataset=train_data,
         eval_dataset=val_data,
@@ -240,7 +242,7 @@ def train(
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
             fp16=True,
-            logging_steps=10,
+            logging_steps=1,
             optim="adamw_torch",
             evaluation_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps",
@@ -260,16 +262,18 @@ def train(
     )
     model.config.use_cache = False
 
-    old_state_dict = model.state_dict
-    model.state_dict = (
-        lambda self, *_, **__: get_peft_model_state_dict(
-            self, old_state_dict()
-        )
-    ).__get__(model, type(model))
+    # The following code caused the saved adapter model to be zero, we don't need this
+    # old_state_dict = model.state_dict
+    # model.state_dict = (
+    #     lambda self, *_, **__: get_peft_model_state_dict(
+    #         self, old_state_dict()
+    #     )
+    # ).__get__(model, type(model))
 
     if torch.__version__ >= "2" and sys.platform != "win32":
         model = torch.compile(model)
 
+    logging.info("Starting training...")
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     model.save_pretrained(output_dir)
